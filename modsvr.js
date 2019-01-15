@@ -1,5 +1,5 @@
 "use strict";
-const DEVNUM = 24 ;
+const DEVNUM = 1 ;
 const TAGNUM = 100 ;
 const GWIP = "192.168.8.100" ;
 const TAGPORT = 1502;
@@ -12,9 +12,9 @@ const app        = express();
 const bodyParser = require('body-parser');
 require('date-utils');
 
-const apinfo = require('./api/apinfo');
-const tags = require('./api/tags');
-const rdata = new Uint16Array() ;
+let apinfo = require('./api/apinfo');
+let tags = require('./api/tags');
+let rdata = new Uint16Array() ;
 
 const ModbusRTU = require("modbus-serial");
 const client = new ModbusRTU();
@@ -60,19 +60,25 @@ function getDevs() {
       .then( (d) => {
         let rapdev = new Uint16Array(d.data);
         apinfo = [];
-        for (i=0; i < rapdev.length ; i += 6) {
-          let d = Math.floor( i / 6) ;
-          let vmac = rapdev[i].toString(16).padStart(4,'0') + ":"
-                    rapdev[i+1].toString(16).padStart(4,'0') + ":"
-                    rapdev[i+2].toString(16).padStart(4,'0') + ":"
-                    rapdev[i+3].toString(16).padStart(4,'0') ;
-          apinfo.push({"apdev": d, "mac":vmac, "act" : rapdev[i+4], "batt" : rapdev[i+5] });
+        for (let i=0; i < rapdev.length ; i += 6) {
+          let d = (Math.floor( i / 6) + 1);
+          let vmac = (rapdev[i] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i] >>>8).toString(16).padStart(2,'0') + ':'
+                   + (rapdev[i+1] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+1] >>>8).toString(16).padStart(2,'0') + ':'
+                   + (rapdev[i+2] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+2] >>>8).toString(16).padStart(2,'0') + ':'
+                   + (rapdev[i+3] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+3] >>>8).toString(16).padStart(2,'0') ;
+          let vbatt = rapdev[i+5] * 100 / 3600 ;
+          apinfo.push({"apdev": d, "mac":vmac, "act" : rapdev[i+4], "batt" : vbatt.toFixed(2)  });
         }
+      })
+      .then ( () => {cli_dev.close();
+      })
+      .catch( (e) => {
+        console.error( "apdev register read error");
+        console.info(e);
       });
-      cli_dev.close();
   })
   .catch((e) => {
-    console.log(DEVPORT + " port conn error");
+    console.error(DEVPORT + " port conn error");
   });
 
   return apinfo ;
@@ -102,7 +108,9 @@ function connect() {
     // if client closed, open a new connection
     client.connectTCP(GWIP, { port: TAGPORT })
         .then(function() {
-            console.log("Connected"); })
+            console.log("Connected");
+            tags = [];
+          })
         .catch(function(e) {
             console.log(TAGPORT + " port conn error"); });
 }
@@ -114,14 +122,18 @@ function getTags() {
 
   client.setID(1);
   if ( client.isOpen) {
-    client.readInputRegisters(1, DEVNUM*TAGNUM*2)
-      .then( function(d) {
-          rdata = new Uint16Array(d.data);
-          creTags() ;
-      })
-      .catch(function(e) {
-  //            checkError(e);
-              console.log("read register error"); });
+//    rdata = [];
+//    for (let ii = 1 ; ii < DEVNUM*TAGNUM*2 ; ii += 50) {
+      client.readInputRegisters(1, 50)
+        .then( function(d) {
+            rdata = new Uint16Array(d.data);
+            creTags();
+        })
+        .catch(function(e) {
+    //            checkError(e);
+                console.error("read register error");
+                console.info(e); });
+//     }
     } else {
       const today = new Date();
       tags[0].tm = today.toFormat('HH24:MI:SS');
@@ -132,28 +144,25 @@ function creTags() {
     const today = new Date();
     const tm = today.toFormat('HH24:MI:SS');
 
-    const taglist = new Array();
-    const aplist = new Array();
+    let taglist = new Array();
+    let aplist = new Array();
     let vbatt = 0, vrssi = 0, vsos = 0 ,vd = 0;
 
-    for (let x = 0;x<rdata.length; x += 2) {
-      let d = Math.floor(x / (TAGNUM*2))  ;
-      if(vd != d) {
+    for (let x = 0; ; x += 2) {
+      let d = (Math.floor(x / (TAGNUM*2)) + 1)  ;
+      if(vd != d && taglist.length || x>=rdata.length) {
         aplist.push({apdev:vd, tags:taglist}) ;
         tags.push({"tm":tm, apdevs:aplist});
         aplist = [] ;
       }
+      if (x>=rdata.length) break ;
       vd = d;
+      if (rdata[x] === 0) continue ;
       let i = x % (TAGNUM*2) ;
       vrssi = rdata[i+1] >>> 8 ;
       vsos  = (rdata[i+1] >>> 7) & 0x01 ;
       vbatt = rdata[i+1] & 0x7f ;
-      taglist.push({tagid:rdata[i], rssi:vrssi, sos:vsos, batt: vbatt }) ;
-    }
-    if(taglist.length > 0) {
-      aplist.push({apdev:vd, tags:taglist}) ;
-      tags.push({"tm":tm, apdevs:aplist});
-      aplist = [] ;
+      taglist.push({tagid:rdata[i], rssi:-vrssi, sos:vsos, batt: vbatt }) ;
     }
 
     if (tags.length >= MAXTAGS) {
