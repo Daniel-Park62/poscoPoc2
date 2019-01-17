@@ -1,10 +1,10 @@
 "use strict";
-const DEVNUM = 1 ;
+const DEVNUM = 2 ;
 const TAGNUM = 100 ;
 const GWIP = "192.168.8.100" ;
 const TAGPORT = 1502;
 const DEVPORT = 1503;
-const MAXTAGS = 30 ;
+const MAXTAGS = 30 ; // 보관할 갯수 이 갯수가 초과되면 오래된것부터 삭제
 
 const path = require('path');
 const express    = require('express');
@@ -14,7 +14,7 @@ require('date-utils');
 
 let apinfo = require('./api/apinfo');
 let tags = require('./api/tags');
-let rdata = new Uint16Array() ;
+let rdata = new Uint16Array(DEVNUM*TAGNUM*2) ;
 
 const ModbusRTU = require("modbus-serial");
 const client = new ModbusRTU();
@@ -32,7 +32,7 @@ app.use(function (req, res, next) { //1
 // API
 
 app.get('/', (req, res) => {
-  res.send('Hello 바가지 희안하다!\n');
+  res.send('<h2>(주)다윈아이씨티 : 태그 정보를 보내주는 API입니다 (/tags, /apdevs) </h2>\n');
  });
 
  app.get('/tags', (req, res) => {
@@ -55,33 +55,37 @@ app.listen(port, function(){
 function getDevs() {
   const cli_dev = new ModbusRTU();
   cli_dev.connectTCP(GWIP, { port: DEVPORT })
-  .then(() => {
-      cli_dev.readInputRegisters(1, DEVNUM*6)
-      .then( (d) => {
-        let rapdev = new Uint16Array(d.data);
-        apinfo = [];
-        for (let i=0; i < rapdev.length ; i += 6) {
-          let d = (Math.floor( i / 6) + 1);
-          let vmac = (rapdev[i] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i] >>>8).toString(16).padStart(2,'0') + ':'
-                   + (rapdev[i+1] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+1] >>>8).toString(16).padStart(2,'0') + ':'
-                   + (rapdev[i+2] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+2] >>>8).toString(16).padStart(2,'0') + ':'
-                   + (rapdev[i+3] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+3] >>>8).toString(16).padStart(2,'0') ;
-          let vbatt = rapdev[i+5] * 100 / 3600 ;
-          apinfo.push({"apdev": d, "mac":vmac, "act" : rapdev[i+4], "batt" : vbatt.toFixed(2)  });
-        }
-      })
-      .then ( () => {cli_dev.close();
-      })
-      .catch( (e) => {
-        console.error( "apdev register read error");
-        console.info(e);
-      });
+  .then( async () => {
+      let vincr = (DEVNUM*6 > 100) ? 100 : DEVNUM*6 ;
+      let rapdev = [] ;
+      for (let ii = 1; ii < DEVNUM*6 ; ii += vincr) {
+        await cli_dev.readInputRegisters(ii, vincr)
+        .then ( (d) => { rapdev = rapdev.concat(d.data) ;})
+        .catch( (e) => {
+          console.error( "apdev register read error");
+          console.info(e);
+        });
+      }
+      cli_dev.close();
+//      let rapdev = new Uint16Array(rdev);
+      apinfo = [];
+      for (let i=0; i < rapdev.length ; i += 6) {
+        let d = (Math.floor( i / 6) + 1);
+        let vmac = (rapdev[i] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i] >>>8).toString(16).padStart(2,'0') + ':'
+                 + (rapdev[i+1] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+1] >>>8).toString(16).padStart(2,'0') + ':'
+                 + (rapdev[i+2] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+2] >>>8).toString(16).padStart(2,'0') + ':'
+                 + (rapdev[i+3] & 255).toString(16).padStart(2,'0') +':' + (rapdev[i+3] >>>8).toString(16).padStart(2,'0') ;
+        let vbatt = rapdev[i+5] * 100 / 3600 ;
+        if (vbatt > 100) vbatt = 100 ;
+        apinfo.push({"apdev": d, "mac":vmac, "act" : rapdev[i+4], "batt" : vbatt.toFixed(2)  });
+      }
   })
   .catch((e) => {
-    console.error(DEVPORT + " port conn error");
+    console.error(DEVPORT , " port conn error");
+    console.info(e);
   });
-
   return apinfo ;
+
 }
 
 function checkError(e) {
@@ -112,7 +116,9 @@ function connect() {
             tags = [];
           })
         .catch(function(e) {
-            console.log(TAGPORT + " port conn error"); });
+            console.error(TAGPORT , " port conn error");
+            console.warn(e);
+          });
 }
 
 function getTags() {
@@ -122,47 +128,58 @@ function getTags() {
 
   client.setID(1);
   if ( client.isOpen) {
-//    rdata = [];
-//    for (let ii = 1 ; ii < DEVNUM*TAGNUM*2 ; ii += 50) {
-      client.readInputRegisters(1, 50)
+
+    readReg().then ( () => {
+      creTags() ;
+    }) ;
+  } else {
+      const today = new Date();
+      tags[0].tm = today.toFormat('YYYY-MM-DD HH24:MI:SS');
+  }
+}
+
+async function readReg() {
+//    rdata = new Uint16Array();
+    for (let ii = 1 ; ii < DEVNUM*TAGNUM*2 ; ii += 100) {
+      await client.readInputRegisters(ii, 100)
         .then( function(d) {
-            rdata = new Uint16Array(d.data);
-            creTags();
+            let rtags = new Uint16Array(d.data);
+            for (let r=0; r < rtags.length;r++) {
+              rdata[ii+r-1] = rtags[r] ;
+            }
         })
         .catch(function(e) {
-    //            checkError(e);
                 console.error("read register error");
                 console.info(e); });
-//     }
-    } else {
-      const today = new Date();
-      tags[0].tm = today.toFormat('HH24:MI:SS');
-    }
+     }  // for
+
 }
 
 function creTags() {
     const today = new Date();
-    const tm = today.toFormat('HH24:MI:SS');
+    const tm = today.toFormat('YYYY-MM-DD HH24:MI:SS');
 
     let taglist = new Array();
     let aplist = new Array();
-    let vbatt = 0, vrssi = 0, vsos = 0 ,vd = 0;
+    let vbatt = 0, vrssi = 0, vsos = 0 ,vd = 1;
 
     for (let x = 0; ; x += 2) {
       let d = (Math.floor(x / (TAGNUM*2)) + 1)  ;
       if(vd != d && taglist.length || x>=rdata.length) {
         aplist.push({apdev:vd, tags:taglist}) ;
-        tags.push({"tm":tm, apdevs:aplist});
-        aplist = [] ;
+        taglist = [];
       }
-      if (x>=rdata.length) break ;
+      if (x>=rdata.length) {
+        tags.push({"tm":tm, apdevs:aplist});
+        break ;
+      }
       vd = d;
-      if (rdata[x] === 0) continue ;
-      let i = x % (TAGNUM*2) ;
-      vrssi = rdata[i+1] >>> 8 ;
-      vsos  = (rdata[i+1] >>> 7) & 0x01 ;
-      vbatt = rdata[i+1] & 0x7f ;
-      taglist.push({tagid:rdata[i], rssi:-vrssi, sos:vsos, batt: vbatt }) ;
+      if (! rdata[x] ) continue ;
+      vrssi = rdata[x+1] >>> 8 ;
+      vsos  = (rdata[x+1] >>> 7) & 0x01 ;
+      vbatt = rdata[x+1] & 0x7f ;
+      taglist.push({tagid:rdata[x], rssi:-vrssi, sos:vsos, batt: vbatt }) ;
+      rdata[x] = 0;
     }
 
     if (tags.length >= MAXTAGS) {
@@ -170,7 +187,9 @@ function creTags() {
       console.log("삭제: " + result.tm );
     }
 }
+
 let timerId = null;
 getTags() ;
+getDevs() ;
 
 timerId = setInterval(getTags, 5000);
