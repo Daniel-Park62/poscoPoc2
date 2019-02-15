@@ -1,7 +1,6 @@
 "use strict";
 const DEVNUM = 2 ;
 const TAGNUM = 100 ;
-const GWIP = "192.168.8.100" ;
 const TAGPORT = 1502;
 const DEVPORT = 1503;
 const MAXTAGS = 30 ; // 보관할 갯수 이 갯수가 초과되면 오래된것부터 삭제
@@ -15,6 +14,9 @@ require('date-utils');
 let apinfo = require('./api/apinfo');
 let tags = require('./api/tags');
 let rdata = new Uint16Array(DEVNUM*TAGNUM*2) ;
+
+let GWIP = process.argv[2] || "192.168.8.100" ;
+let port = process.argv[3] || 9988;
 
 const ModbusRTU = require("modbus-serial");
 const client = new ModbusRTU();
@@ -47,7 +49,7 @@ app.get('/', (req, res) => {
  });
 
 // Server
-let port = process.argv[2] || 9988;
+
 app.listen(port, function(){
   console.log('listening on port:' + port);
 });
@@ -166,7 +168,9 @@ function creTags() {
     for (let x = 0; ; x += 2) {
       let d = (Math.floor(x / (TAGNUM*2)) + 1)  ;
       if(vd != d && taglist.length || x>=rdata.length) {
-        aplist.push({apdev:vd, tags:taglist}) ;
+        if ( apinfo.filter( item => item.apdev == vd )[0].act == 2 ) {
+          aplist.push({apdev:vd, tags:taglist}) ;
+        }
         taglist = [];
       }
       if (x>=rdata.length) {

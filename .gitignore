@@ -1,0 +1,6 @@
+*.exe
+*~
+modapp-*
+node_modules/
+
+
