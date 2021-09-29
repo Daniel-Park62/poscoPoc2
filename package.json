@@ -14,7 +14,7 @@
     "bufferstream": "^0.6.2",
     "date-utils": "^1.2.21",
     "express": "^4.16.4",
-    "i": "^0.3.6",
+    "i": "^0.3.7",
     "modbus-serial": "^7.4.2",
     "moment": "^2.24.0",
     "mysql": "^2.16.0",
