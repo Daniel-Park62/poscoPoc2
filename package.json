@@ -13,7 +13,7 @@
     "body-parser": "^1.18.3",
     "bufferstream": "^0.6.2",
     "date-utils": "^1.2.21",
-    "express": "^4.16.4",
+    "express": "^4.17.3",
     "i": "^0.3.6",
     "modbus-serial": "^7.4.2",
     "moment": "^2.24.0",
